@@ -1,0 +1,68 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+    
+    - name: Build with PyInstaller
+      run: |
+        pyinstaller --onefile --windowed --name="安防维保管理系统" app.py
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: 安防维保管理系统-windows
+        path: dist/安防维保管理系统.exe
+        retention-days: 7
+
+  create-release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Download artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: 安防维保管理系统-windows
+        path: artifacts/windows
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ github.run_number }}
+        name: 安防维保管理系统 v${{ github.run_number }}
+        body: |
+          # 安防维保管理系统 v${{ github.run_number }}
+          
+          ## 更新内容
+          自动化构建版本
+          
+          ## 使用说明
+          下载 `安防维保管理系统.exe` 并运行。
+          
+          ## 构建信息
+          - 构建号: ${{ github.run_number }}
+          - 提交: ${{ github.sha }}
+        files: |
+          artifacts/windows/安防维保管理系统.exe
