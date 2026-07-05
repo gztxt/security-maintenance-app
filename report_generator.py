@@ -209,11 +209,21 @@ class ReportGenerator:
             fontName='DroidSansFallback'
         )
 
+        # 日期部分用小字号的样式
+        date_value_style = ParagraphStyle(
+            'DateValue',
+            parent=styles['Normal'],
+            fontSize=12,
+            alignment=0,
+            fontName='DroidSansFallback'
+        )
+
         # 动态计算维保周期
         y, m = map(int, year_month.split('-'))
         last_day = calendar.monthrange(y, m)[1]
 
         # 4行项目信息（无日期行）
+        # 注意：第4行"维保周期："标签用14pt，具体日期用12pt
         info_rows = [
             [Paragraph("项目名称：岭南学院安防维保项目", project_info_style)],
             [Paragraph("委托单位：广东岭南现代技师学院", project_info_style)],
@@ -221,10 +231,16 @@ class ReportGenerator:
             [Paragraph(f"维保周期：{_fw(str(y))}年{_fw(str(m))}月{_fw('1')}日－{_fw(str(y))}年{_fw(str(m))}月{_fw(str(last_day))}日", project_info_style)],
         ]
         # 表格左加20mm空列实现偏移，文字在140mm列内左对齐
+        # 第4行日期用并排："维保周期："(14pt) + 日期(12pt)
         cover_rows = [[Paragraph("", project_info_style), Paragraph("项目名称：岭南学院安防维保项目", project_info_style)],
                      [Paragraph("", project_info_style), Paragraph("委托单位：广东岭南现代技师学院", project_info_style)],
                      [Paragraph("", project_info_style), Paragraph("外委单位：广州市高科通信技术股份有限公司", project_info_style)],
-                     [Paragraph("", project_info_style), Paragraph(f"维保周期：{_fw(str(y))}年{_fw(str(m))}月{_fw('1')}日－{_fw(str(y))}年{_fw(str(m))}月{_fw(str(last_day))}日", project_info_style)],
+                     [Paragraph("", project_info_style), Paragraph(
+                         '<font size="14">维保周期：</font><font size="12">' +
+                         f'{_fw(str(y))}年{_fw(str(m))}月{_fw("1")}日－{_fw(str(y))}年{_fw(str(m))}月{_fw(str(last_day))}日' +
+                         '</font>',
+                         project_info_style
+                     )],
                      ]
         cover_table = Table(cover_rows, colWidths=[40*mm, 140*mm], hAlign='CENTER')
         cover_table.setStyle(TableStyle([
@@ -256,8 +272,8 @@ class ReportGenerator:
     def _add_summary_page(self, story, styles, logs, year_month):
         """维保情况简述页：1×2 表格，左右5mm边距，内容自然分页"""
 
-        left_w = 30*mm
-        right_w = 170*mm
+        left_w = 42*mm
+        right_w = 158*mm
 
         left_style = ParagraphStyle(
             'LeftCell',
