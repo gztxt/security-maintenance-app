@@ -62,11 +62,9 @@ jobs:
         chmod +x gradlew
         ./gradlew assembleRelease
     
-    - name: Sign APK (debug key)
+    - name: Rename APK
       run: |
-        cd android-template
-        # 使用 debug.keystore 签名（GitHub Actions 自带）
-        $ANDROID_HOME/build-tools/*/apksigner sign --ks ~/.android/debug.keystore           --ks-pass pass:android --ks-key-alias androiddebugkey           app/build/outputs/apk/release/app-release-unsigned.apk           --out app/build/outputs/apk/release/安防维保管理系统.apk
+        cp android-template/app/build/outputs/apk/release/app-release-unsigned.apk android-template/app/build/outputs/apk/release/安防维保管理系统.apk
     
     - name: Upload APK artifact
       uses: actions/upload-artifact@v4
