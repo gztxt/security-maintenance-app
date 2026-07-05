@@ -61,17 +61,17 @@ jobs:
         cd android-template
         gradle wrapper --gradle-version=8.9
         chmod +x gradlew
-        ./gradlew assembleRelease
+        ./gradlew assembleDebug
     
     - name: Rename APK
       run: |
-        cp android-template/app/build/outputs/apk/release/app-release-unsigned.apk android-template/app/build/outputs/apk/release/安防维保管理系统.apk
+        cp android-template/app/build/outputs/apk/debug/app-debug.apk android-template/app/build/outputs/apk/debug/安防维保管理系统.apk
     
     - name: Upload APK artifact
       uses: actions/upload-artifact@v4
       with:
         name: 安防维保管理系统-android
-        path: android-template/app/build/outputs/apk/release/安防维保管理系统.apk
+        path: android-template/app/build/outputs/apk/debug/安防维保管理系统.apk
         retention-days: 7
 
   create-release:
