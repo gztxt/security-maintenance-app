@@ -34,7 +34,6 @@ jobs:
         path: dist/安防维保管理系统.exe
         retention-days: 7
 
-
   build-android:
     runs-on: ubuntu-latest
     
@@ -57,7 +56,6 @@ jobs:
     - name: Build APK
       run: |
         cd android-template
-        # gradle-init 生成 wrapper（模板仓库没提交 gradlew）
         gradle wrapper --gradle-version=8.9
         chmod +x gradlew
         ./gradlew assembleRelease
@@ -72,7 +70,6 @@ jobs:
         name: 安防维保管理系统-android
         path: android-template/app/build/outputs/apk/release/安防维保管理系统.apk
         retention-days: 7
-
 
   create-release:
     needs: [build-windows, build-android]
@@ -92,24 +89,10 @@ jobs:
         path: artifacts/android
     
     - name: Create Release
-      uses: softprops/action-gh-release@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: v${{ github.run_number }}
-        name: 安防维保管理系统 v${{ github.run_number }}
-        body: |
-          # 安防维保管理系统 v${{ github.run_number }}
-          
-          ## 更新内容
-          自动化构建版本
-          
-          ## 使用说明
-          下载 `安防维保管理系统.exe` 并运行。
-          
-          ## 构建信息
-          - 构建号: ${{ github.run_number }}
-          - 提交: ${{ github.sha }}
-        files: |
-          artifacts/windows/安防维保管理系统.exe
+      run: |
+        gh release create "v${{ github.run_number }}" \
+          --title "安防维保管理系统 v${{ github.run_number }}" \
+          --notes "构建号: ${{ github.run_number }}
+        提交: ${{ github.sha }}" \
+          artifacts/windows/安防维保管理系统.exe \
           artifacts/android/安防维保管理系统.apk
