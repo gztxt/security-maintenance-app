@@ -1,0 +1,9 @@
+<!DOCTYPE html><html><body>
+<div id="result">not clicked</div>
+<button id="btn" onclick="testClick()">点击我</button>
+<script>
+function testClick() {
+    document.getElementById('result').textContent = 'clicked at ' + new Date().toLocaleTimeString();
+}
+</script>
+</body></html>
