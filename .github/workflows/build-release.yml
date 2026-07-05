@@ -92,6 +92,8 @@ jobs:
         path: artifacts/android
     
     - name: Create Release
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         gh release create "v${{ github.run_number }}" \
           --title "安防维保管理系统 v${{ github.run_number }}" \
