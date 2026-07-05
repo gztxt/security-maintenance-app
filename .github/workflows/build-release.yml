@@ -57,6 +57,8 @@ jobs:
     - name: Build APK
       run: |
         cd android-template
+        # gradle-init 生成 wrapper（模板仓库没提交 gradlew）
+        gradle wrapper --gradle-version=8.9
         chmod +x gradlew
         ./gradlew assembleRelease
     
