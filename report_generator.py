@@ -420,6 +420,10 @@ class ReportGenerator:
         """详细维保记录页：连续追加，每页尽量填满，让 SimpleDocTemplate 自动分页"""
 
         col_widths = [44.7*mm, 44.7*mm, 49.5*mm, 61.1*mm]
+        left_style = ParagraphStyle(
+            'dLeft', parent=styles['Normal'],
+            alignment=1, fontSize=11, fontName='DroidSansFallback'
+        )
 
         for log in logs:
             data = []
@@ -450,28 +454,24 @@ class ReportGenerator:
                 Paragraph(locations, cell_style_l),
             ])
 
-            # 第3行：巡查情况 — 11pt→10pt→9pt→8pt自动缩放，顶部左对齐
+            # 第3行：巡查情况 — 11pt→7pt自动缩放
             work_log = log['work_log'] or "正常巡查"
             formatted_log = self._format_work_log(work_log)
 
-            # 自动缩放：在行高内从小到大试字号
             detail_width = col_widths[1] + col_widths[2] + col_widths[3]
-            final_font_size = 8
-            for fs in [11, 10, 9, 8, 7, 6]:
+            final_font_size = 7
+            for fs in [11, 10, 9, 8, 7]:
                 tmp_style = ParagraphStyle(
                     'dRightTmp', parent=styles['Normal'],
                     alignment=0, fontSize=fs, fontName='DroidSansFallback',
                     leading=int(fs * 1.3), wordWrap='CJK'
                 )
                 w_test, h_test = Paragraph(formatted_log, tmp_style).wrap(detail_width - 8, 200*mm)
+                # 32mm 以内可接受
                 if h_test <= 28*mm:
                     final_font_size = fs
                     break
 
-            left_style = ParagraphStyle(
-                'dLeft', parent=styles['Normal'],
-                alignment=1, fontSize=11, fontName='DroidSansFallback'
-            )
             right_style = ParagraphStyle(
                 'dRight', parent=styles['Normal'],
                 alignment=0, fontSize=final_font_size, fontName='DroidSansFallback',
@@ -482,7 +482,7 @@ class ReportGenerator:
                 Paragraph(formatted_log, right_style), "", ""
             ])
 
-            # 第4行：现场照片 — 宽度40mm，等比缩放，行高35mm
+            # 第4行：现场照片
             images = self.db.get_images_for_date(log['date'])
             images = self._sync_images_fs_with_db(log['date'], images)
 
@@ -533,9 +533,10 @@ class ReportGenerator:
                 photo_table, "", ""
             ])
 
-            # 按实际渲染高度计算行高
+            # 按内容实际高度计算行高，照片行固定40mm
             w_r, h_r = Paragraph(formatted_log, right_style).wrap(detail_width - 8, 200*mm)
-            actual_heights = [10*mm, 12*mm, h_r + 4*mm, 41*mm]
+            actual_heights = [10*mm, 12*mm, h_r + 4*mm, 40*mm]
+
             table = Table(data, colWidths=col_widths, rowHeights=actual_heights)
             table.setStyle(TableStyle([
                 ('GRID', (0,0), (-1,-1), 0.5, colors.black),
