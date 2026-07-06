@@ -183,6 +183,11 @@ function loadImages() {
             } else if (i === imgs.length && imgs.length < maxImgs) {
                 slot.innerHTML = '<div class="placeholder">📷</div><div class="add-label">拍照/选取</div>';
                 slot.onclick = openAlbum;
+                // 右键粘贴
+                slot.oncontextmenu = function(e) {
+                    e.preventDefault();
+                    pasteFromClipboard();
+                };
             } else {
                 slot.style.cssText = "border:none;background:transparent;";
             }
@@ -213,6 +218,86 @@ function handleFiles(files) {
             showToast("上传失败", "error");
         }
     });
+}
+
+/* ── 粘贴图片 ── */
+function setupPaste() {
+    // 在页面中放一个不可见的粘贴捕获区
+    var pasteArea = document.createElement("div");
+    pasteArea.id = "pasteCatcher";
+    pasteArea.contentEditable = "true";
+    pasteArea.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;overflow:hidden;";
+    document.body.appendChild(pasteArea);
+
+    // 粘贴捕获区监听 paste 事件
+    pasteArea.addEventListener("paste", function(e) {
+        e.preventDefault();
+        var dailyPage = getId("page-daily");
+        if (!dailyPage || !dailyPage.classList.contains("active")) return;
+        if (!curDate) { showToast("请先选择日期", "info"); return; }
+
+        var items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf("image") === 0) {
+                var blob = items[i].getAsFile();
+                if (blob && blob.size > 0) {
+                    handleFiles([blob]);
+                    return;
+                }
+            }
+        }
+
+        // 没找到图片
+        showToast("剪贴板中没有图片", "info");
+    });
+
+    // 全局 Ctrl+V 时，聚焦到粘贴捕获区（确保事件送达）
+    document.addEventListener("keydown", function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === "v") {
+            var dailyPage = getId("page-daily");
+            if (dailyPage && dailyPage.classList.contains("active") && curDate) {
+                pasteArea.focus();
+            }
+        }
+    });
+
+}
+
+
+
+/* ── 从剪贴板粘贴图片（右键/占位槽菜单用） ── */
+function pasteFromClipboard() {
+    if (!curDate) {
+        showToast("请先选择日期", "info");
+        return;
+    }
+    // 用异步剪贴板 API 读取（仅 HTTPS/localhost 可用）
+    if (navigator.clipboard && navigator.clipboard.read) {
+        navigator.clipboard.read().then(function(items) {
+            var found = false;
+            for (var i = 0; i < items.length; i++) {
+                for (var j = 0; j < items[i].types.length; j++) {
+                    if (items[i].types[j].indexOf("image") === 0) {
+                        found = true;
+                        (function(t) {
+                            items[i].getType(t).then(function(blob) {
+                                handleFiles([new File([blob], "paste.png", {type: blob.type})]);
+                            });
+                        })(items[i].types[j]);
+                        break;
+                    }
+                }
+            }
+            if (!found) showToast("剪贴板中没有图片", "info");
+        }).catch(function() {
+            // clipboard.read 不可用（HTTP 站点），回退提示
+            showToast("请按 Ctrl+V 粘贴图片", "info");
+        });
+    } else {
+        showToast("请按 Ctrl+V 粘贴图片", "info");
+    }
 }
 
 function deletePicture(idx) {
@@ -342,7 +427,9 @@ document.addEventListener("DOMContentLoaded", function() {
 
     // 相册
     getId("albumInput").addEventListener("change", handleAlbumFiles);
-    getId("btnAlbum").addEventListener("click", openAlbum);
+
+    // 粘贴（桌面端 Ctrl+V）
+    setupPaste();
 
     // 报告
     getId("btnGenReport").addEventListener("click", generateReport);
