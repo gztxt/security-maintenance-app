@@ -1,0 +1,6 @@
+data/backups/
+data/database-live.db
+__pycache__/
+*.pyc
+data/database.db
+data/database.bak.dev
