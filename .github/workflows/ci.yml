@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -29,14 +27,13 @@ jobs:
         python --version
         python -c "
 import config
-print('config ✅')
+print('config \u2705')
 import database
-print('database ✅')
+print('database \u2705')
 import image_processor
-print('image_processor ✅')
+print('image_processor \u2705')
 import report_generator
-print('report_generator ✅')
+print('report_generator \u2705')
 import app
-print('app ✅')
+print('app \u2705')
 print('All imports passed!')
-"
