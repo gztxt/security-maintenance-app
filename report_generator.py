@@ -118,17 +118,45 @@ class ReportGenerator:
             story.append(PageBreak())
             self._add_summary_page(story, styles, logs, year_month)
 
-            # 详细维保记录页（每页3个记录块）
+            # 详细维保记录页
             story.append(PageBreak())
             self._add_detailed_records_pages(story, styles, logs, year_month)
 
+            # 移除末尾空白页：如果最后一个元素是 PageBreak 则删除
+            if story and isinstance(story[-1], PageBreak):
+                story.pop()
+
             doc.build(story)
+
+            # 再次检查，如果 PDF 末尾有空白页则截掉
+            self._remove_trailing_blank_page(str(report_path))
+
             return True, str(report_path)
 
         except ImportError:
             return False, "缺少PDF生成库，请安装reportlab"
         except Exception as e:
             return False, f"PDF生成失败: {str(e)}"
+
+    @staticmethod
+    def _remove_trailing_blank_page(pdf_path):
+        """移除 PDF 末尾的空白页（使用 pymupdf/fitz）"""
+        try:
+            import fitz
+            doc = fitz.open(pdf_path)
+            if doc.page_count <= 1:
+                doc.close()
+                return
+            last_page = doc[-1]
+            text = last_page.get_text().strip()
+            if not text:
+                doc.delete_page(doc.page_count - 1)
+                doc.save(pdf_path, incremental=False, deflate=True)
+            doc.close()
+        except ImportError:
+            pass
+        except Exception:
+            pass
 
     # ═══════════════════════════════════════════════════════════
     #  辅助函数
@@ -270,10 +298,13 @@ class ReportGenerator:
     # ═══════════════════════════════════════════════════════════
 
     def _add_summary_page(self, story, styles, logs, year_month):
-        """维保情况简述页：1×2 表格，左右5mm边距，内容自然分页"""
+        """维保情况简述页：1×2 单行表格，左列30mm“维保情况简述”，右列170mm填充。
+        手动按高度分页：用 Paragraph.wrap 精确测量每条日志高度，填满后自动换页。
+        当单条日志高度>剩余空间时，用二分法精确截断文本，前半放本页后半下页。
+        每个 Paragraph 被放入固定行高 cell，靠 flowables 列表自然填充。"""
 
-        left_w = 42*mm
-        right_w = 158*mm
+        left_w = 40*mm
+        right_w = 160*mm
 
         left_style = ParagraphStyle(
             'LeftCell',
@@ -297,36 +328,75 @@ class ReportGenerator:
         pad_v = 3*mm
         pad_h = 4*mm
         right_inner_w = right_w - 2*pad_h
-        
-        row_h = A4[1] - 10*mm - 12  # 可用高度287mm减去表格边框偏差
 
-        paragraphs = []
+        row_h_pt = A4[1] - 10*mm - 12
+        inner_h_pt = row_h_pt - 2*pad_v
+
+        # 先把所有日志文本预拼成段落
+        raw_texts = []
         for log in logs:
-            date_display = self._format_date_chinese(log['date'])
-            work_content = self._format_work_log(log['work_log'] or "正常巡查")
-            paragraphs.append(Paragraph(f"〔{date_display}〕{work_content}", right_style))
+            dd = self._format_date_chinese(log['date'])
+            wc = self._format_work_log(log['work_log'] or "正常巡查")
+            raw_texts.append(f"〔{dd}〕{wc}")
 
-        # 按自然填充分页，不按日期分割
-        idx = 0
-        while idx < len(paragraphs):
-            if idx > 0:
-                story.append(PageBreak())
+        # 二分法截断文本
+        def split_by_height(text, h_limit):
+            if not text:
+                return "", ""
+            p = Paragraph(text, right_style)
+            _, h = p.wrap(right_inner_w, h_limit)
+            if h <= h_limit:
+                return text, ""
+            lo, hi = 1, len(text)
+            best = 1
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                p2 = Paragraph(text[:mid], right_style)
+                _, h2 = p2.wrap(right_inner_w, h_limit)
+                if h2 <= h_limit:
+                    best = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            return text[:best], text[best:]
 
+        # 填入 story
+        remaining_texts = raw_texts[:]
+        first_page = True
+
+        while remaining_texts:
             left_content = Paragraph("维保情况简述", left_style)
             used = 0
-            cell_flowables = []
-            inner_h_max = row_h - 2*pad_v
-            while idx < len(paragraphs):
-                w, h = paragraphs[idx].wrap(right_inner_w, inner_h_max)
-                if used + h <= inner_h_max:
-                    cell_flowables.append(paragraphs[idx])
-                    used += h
-                    idx += 1
-                else:
-                    break
+            page_content = []
 
-            data = [[left_content, cell_flowables]]
-            table = Table(data, colWidths=[left_w, right_w], rowHeights=[row_h])
+            while remaining_texts:
+                avail = inner_h_pt - used
+                if avail < 10:
+                    break
+                text = remaining_texts[0]
+                first, rest = split_by_height(text, avail)
+                if not first:
+                    break
+                page_content.append(Paragraph(first, right_style))
+                if rest:
+                    remaining_texts[0] = rest
+                    break
+                else:
+                    remaining_texts.pop(0)
+                    # 重新 wrap 获取实际高度
+                    w, h = Paragraph(first, right_style).wrap(right_inner_w, inner_h_pt - used)
+                    used += h
+
+            if not page_content:
+                break
+
+            if first_page:
+                first_page = False
+            else:
+                story.append(PageBreak())
+
+            data = [[left_content, page_content]]
+            table = Table(data, colWidths=[left_w, right_w], rowHeights=[row_h_pt])
             table.setStyle(TableStyle([
                 ('BOX', (0,0), (-1,-1), 0.5, colors.black),
                 ('INNERGRID', (0,0), (-1,-1), 0.5, colors.black),
@@ -347,154 +417,144 @@ class ReportGenerator:
     # ═══════════════════════════════════════════════════════════
 
     def _add_detailed_records_pages(self, story, styles, logs, year_month):
-        """详细维保记录页：每页3个记录块，固定行高[10,12,24,35]mm，文本不缩放，溢出走续块"""
+        """详细维保记录页：连续追加，每页尽量填满，让 SimpleDocTemplate 自动分页"""
 
         col_widths = [44.7*mm, 44.7*mm, 49.5*mm, 61.1*mm]
-        ROW_HEIGHTS = [10*mm, 12*mm, 32*mm, 41*mm]
 
-        for page_start in range(0, len(logs), 3):
-            if page_start > 0:
-                story.append(PageBreak())
+        for log in logs:
+            data = []
 
-            page_logs = logs[page_start:page_start+3]
+            # 第1行：标题行（四列合并）
+            header_style = ParagraphStyle(
+                'dHdr', parent=styles['Heading3'],
+                alignment=1, fontSize=14, fontName='DroidSansFallback'
+            )
+            data.append([Paragraph("监控排查现场", header_style), "", "", ""])
 
-            for bi, log in enumerate(page_logs):
-                if bi > 0:
-                    story.append(Spacer(1, 1*mm))
+            # 第2行：时间 + 地点
+            date_display = self._format_date_chinese(log['date'])
+            locations = _fw(log['locations'] or "未指定")
 
-                data = []
+            cell_style_c = ParagraphStyle(
+                'dCellC', parent=styles['Normal'],
+                alignment=1, fontSize=11, fontName='DroidSansFallback'
+            )
+            cell_style_l = ParagraphStyle(
+                'dCellL', parent=styles['Normal'],
+                alignment=0, fontSize=11, fontName='DroidSansFallback'
+            )
+            data.append([
+                Paragraph(_fw("时间"), cell_style_c),
+                Paragraph(date_display, cell_style_c),
+                Paragraph(_fw("地点"), cell_style_c),
+                Paragraph(locations, cell_style_l),
+            ])
 
-                # 第1行：标题行（四列合并）
-                header_style = ParagraphStyle(
-                    'dHdr', parent=styles['Heading3'],
-                    alignment=1, fontSize=14, fontName='DroidSansFallback'
+            # 第3行：巡查情况 — 11pt→10pt→9pt→8pt自动缩放，顶部左对齐
+            work_log = log['work_log'] or "正常巡查"
+            formatted_log = self._format_work_log(work_log)
+
+            # 自动缩放：在行高内从小到大试字号
+            detail_width = col_widths[1] + col_widths[2] + col_widths[3]
+            final_font_size = 8
+            for fs in [11, 10, 9, 8, 7, 6]:
+                tmp_style = ParagraphStyle(
+                    'dRightTmp', parent=styles['Normal'],
+                    alignment=0, fontSize=fs, fontName='DroidSansFallback',
+                    leading=int(fs * 1.3), wordWrap='CJK'
                 )
-                data.append([Paragraph("监控排查现场", header_style), "", "", ""])
+                w_test, h_test = Paragraph(formatted_log, tmp_style).wrap(detail_width - 8, 200*mm)
+                if h_test <= 28*mm:
+                    final_font_size = fs
+                    break
 
-                # 第2行：时间 + 地点
-                date_display = self._format_date_chinese(log['date'])
-                locations = _fw(log['locations'] or "未指定")
+            left_style = ParagraphStyle(
+                'dLeft', parent=styles['Normal'],
+                alignment=1, fontSize=11, fontName='DroidSansFallback'
+            )
+            right_style = ParagraphStyle(
+                'dRight', parent=styles['Normal'],
+                alignment=0, fontSize=final_font_size, fontName='DroidSansFallback',
+                leading=int(final_font_size * 1.3), wordWrap='CJK'
+            )
+            data.append([
+                Paragraph(_fw("巡查情况"), left_style),
+                Paragraph(formatted_log, right_style), "", ""
+            ])
 
-                cell_style_c = ParagraphStyle(
-                    'dCellC', parent=styles['Normal'],
-                    alignment=1, fontSize=11, fontName='DroidSansFallback'
-                )
-                cell_style_l = ParagraphStyle(
-                    'dCellL', parent=styles['Normal'],
-                    alignment=0, fontSize=11, fontName='DroidSansFallback'
-                )
-                data.append([
-                    Paragraph(_fw("时间"), cell_style_c),
-                    Paragraph(date_display, cell_style_c),
-                    Paragraph(_fw("地点"), cell_style_c),
-                    Paragraph(locations, cell_style_l),
-                ])
+            # 第4行：现场照片 — 宽度40mm，等比缩放，行高35mm
+            images = self.db.get_images_for_date(log['date'])
+            images = self._sync_images_fs_with_db(log['date'], images)
 
-                # 第3行：巡查情况 — 11pt→10pt→9pt→8pt自动缩放，顶部左对齐，固定行高32mm
-                work_log = log['work_log'] or "正常巡查"
-                formatted_log = self._format_work_log(work_log)
+            photo_cells = []
+            if images:
+                date_dir = log['date']
+                ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp"}
+                img_w = 34*mm
+                max_h = 40*mm
+                valid_paths = []
+                for img_info in images[:4]:
+                    thumb_name = img_info.get('thumbnail_name')
+                    name = img_info.get('image_name', '')
+                    ext = os.path.splitext(thumb_name or name)[1].lower()
+                    if ext not in ALLOWED_EXT:
+                        continue
+                    p = os.path.join(str(config.images_dir), date_dir, thumb_name or name)
+                    if os.path.exists(p):
+                        valid_paths.append(p)
 
-                # 自动缩放：在32mm行高内从小到大试字号
-                detail_width = col_widths[1] + col_widths[2] + col_widths[3]
-                final_font_size = 8
-                for fs in [11, 10, 9, 8, 7, 6]:
-                    tmp_style = ParagraphStyle(
-                        'dRightTmp', parent=styles['Normal'],
-                        alignment=0, fontSize=fs, fontName='DroidSansFallback',
-                        leading=int(fs * 1.3), wordWrap='CJK'
-                    )
-                    w_test, h_test = Paragraph(formatted_log, tmp_style).wrap(detail_width - 8, 200*mm)
-                    if h_test <= 28*mm:
-                        final_font_size = fs
-                        break
+                for ph_i, p in enumerate(valid_paths):
+                    try:
+                        ir = ImageReader(p)
+                        iw, ih = ir.getSize()
+                        if iw > 0:
+                            actual_h = min(ih * (img_w / iw), max_h)
+                        else:
+                            actual_h = max_h
+                        photo_cells.append(Image(p, width=img_w, height=actual_h))
+                    except Exception:
+                        continue
+                    if ph_i < len(valid_paths) - 1:
+                        photo_cells.append(Spacer(3*mm, 0))
 
-                left_style = ParagraphStyle(
-                    'dLeft', parent=styles['Normal'],
-                    alignment=1, fontSize=11, fontName='DroidSansFallback'
-                )
-                right_style = ParagraphStyle(
-                    'dRight', parent=styles['Normal'],
-                    alignment=0, fontSize=final_font_size, fontName='DroidSansFallback',
-                    leading=int(final_font_size * 1.3), wordWrap='CJK'
-                )
-                data.append([
-                    Paragraph(_fw("巡查情况"), left_style),
-                    Paragraph(formatted_log, right_style), "", ""
-                ])
-
-                # 第4行：现场照片 — 宽度40mm，等比缩放，行高35mm
-                images = self.db.get_images_for_date(log['date'])
-                images = self._sync_images_fs_with_db(log['date'], images)
-
-                photo_cells = []
-                if images:
-                    date_dir = log['date']
-                    ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp"}
-                    img_w = 34*mm
-                    max_h = 40*mm
-                    valid_paths = []
-                    for img_info in images[:4]:
-                        thumb_name = img_info.get('thumbnail_name')
-                        name = img_info.get('image_name', '')
-                        ext = os.path.splitext(thumb_name or name)[1].lower()
-                        if ext not in ALLOWED_EXT:
-                            continue
-                        p = os.path.join(str(config.images_dir), date_dir, thumb_name or name)
-                        if os.path.exists(p):
-                            valid_paths.append(p)
-
-                    for ph_i, p in enumerate(valid_paths):
-                        try:
-                            ir = ImageReader(p)
-                            iw, ih = ir.getSize()
-                            if iw > 0:
-                                actual_h = min(ih * (img_w / iw), max_h)
-                            else:
-                                actual_h = max_h
-                            photo_cells.append(Image(p, width=img_w, height=actual_h))
-                        except Exception:
-                            continue
-                        if ph_i < len(valid_paths) - 1:
-                            photo_cells.append(Spacer(3*mm, 0))
-
-                photo_table = Table([photo_cells], hAlign='LEFT') if photo_cells else Spacer(1, 0)
-                if isinstance(photo_table, Table):
-                    photo_table.setStyle(TableStyle([
-                        ('LEFTPADDING', (0,0), (-1,-1), 0),
-                        ('RIGHTPADDING', (0,0), (-1,-1), 0),
-                        ('TOPPADDING', (0,0), (-1,-1), 0),
-                        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-                        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                    ]))
-
-                data.append([
-                    Paragraph(_fw("现场照片"), left_style),
-                    photo_table, "", ""
-                ])
-
-                # 按实际渲染高度计算行高
-                w_r, h_r = Paragraph(formatted_log, right_style).wrap(detail_width - 8, 200*mm)
-                actual_heights = [10*mm, 12*mm, h_r + 4*mm, 41*mm]
-                table = Table(data, colWidths=col_widths, rowHeights=actual_heights)
-                table.setStyle(TableStyle([
-                    ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-                    ('SPAN', (0,0), (3,0)),
-                    ('SPAN', (1,2), (3,2)),
-                    ('SPAN', (1,3), (3,3)),
-                    ('FONTNAME', (0,0), (-1,-1), 'DroidSansFallback'),
+            photo_table = Table([photo_cells], hAlign='LEFT') if photo_cells else Spacer(1, 0)
+            if isinstance(photo_table, Table):
+                photo_table.setStyle(TableStyle([
+                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                    ('TOPPADDING', (0,0), (-1,-1), 0),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+                    ('ALIGN', (0,0), (-1,-1), 'CENTER'),
                     ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                    ('VALIGN', (0,1), (-1,-1), 'MIDDLE'),
-                    ('VALIGN', (1,2), (3,2), 'TOP'),
-                    ('ALIGN', (0,0), (3,0), 'CENTER'),
-                    ('ALIGN', (0,1), (3,2), 'CENTER'),
-                    ('ALIGN', (0,3), (-1,-1), 'CENTER'),
-                    ('LEFTPADDING', (0,0), (-1,-1), 2),
-                    ('RIGHTPADDING', (0,0), (-1,-1), 2),
-                    ('TOPPADDING', (0,0), (-1,-1), 1),
-                    ('BOTTOMPADDING', (0,0), (-1,-1), 1),
                 ]))
-                story.append(table)
+
+            data.append([
+                Paragraph(_fw("现场照片"), left_style),
+                photo_table, "", ""
+            ])
+
+            # 按实际渲染高度计算行高
+            w_r, h_r = Paragraph(formatted_log, right_style).wrap(detail_width - 8, 200*mm)
+            actual_heights = [10*mm, 12*mm, h_r + 4*mm, 41*mm]
+            table = Table(data, colWidths=col_widths, rowHeights=actual_heights)
+            table.setStyle(TableStyle([
+                ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+                ('SPAN', (0,0), (3,0)),
+                ('SPAN', (1,2), (3,2)),
+                ('SPAN', (1,3), (3,3)),
+                ('FONTNAME', (0,0), (-1,-1), 'DroidSansFallback'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('VALIGN', (0,1), (-1,-1), 'MIDDLE'),
+                ('VALIGN', (1,2), (3,2), 'TOP'),
+                ('ALIGN', (0,0), (3,0), 'CENTER'),
+                ('ALIGN', (0,1), (3,2), 'CENTER'),
+                ('ALIGN', (0,3), (-1,-1), 'CENTER'),
+                ('LEFTPADDING', (0,0), (-1,-1), 2),
+                ('RIGHTPADDING', (0,0), (-1,-1), 2),
+                ('TOPPADDING', (0,0), (-1,-1), 1),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 1),
+            ]))
+            story.append(table)
     # ═══════════════════════════════════════════════════════════
     #  照片辅助（从原始代码保留）
     # ═══════════════════════════════════════════════════════════
