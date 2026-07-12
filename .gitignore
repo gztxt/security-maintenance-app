@@ -4,3 +4,22 @@ __pycache__/
 *.pyc
 data/database.db
 data/database.bak.dev
+
+# Code intelligence / tooling caches
+.codegraph/
+
+# Virtual environment
+venv/
+.venv/
+
+# Editor backups / source snapshots
+*.bak
+*.bak.*
+report_generator.py.bak.*
+
+# Packaged artifacts
+static/*.zip
+
+# Generated data / reports
+data/reports/
+data/images/
