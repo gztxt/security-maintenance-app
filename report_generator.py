@@ -15,7 +15,7 @@ import re
 # ReportLab相关导入
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
+from reportlab.platypus import SimpleDocTemplate, BaseDocTemplate, PageTemplate, Frame, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
 from reportlab.lib.units import cm, mm
 from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
@@ -100,7 +100,10 @@ class ReportGenerator:
 
             report_path = config.reports_dir / f"维保报告_{year_month}.pdf"
 
-            doc = SimpleDocTemplate(
+            # 用 BaseDocTemplate + 零内边距 Frame：SimpleDocTemplate 的 Frame 默认
+            # topPadding/bottomPadding 各 6pt(共~4.2mm)会吃掉可用高度，导致 3×95=285mm
+            # 的表格放不进 287mm。归零后可用高度恢复完整 287mm。
+            doc = BaseDocTemplate(
                 str(report_path),
                 pagesize=A4,
                 leftMargin=5*mm,
@@ -108,6 +111,14 @@ class ReportGenerator:
                 topMargin=5*mm,
                 bottomMargin=5*mm
             )
+            frame = Frame(
+                doc.leftMargin, doc.bottomMargin,
+                doc.width, doc.height,
+                leftPadding=0, rightPadding=0,
+                topPadding=0, bottomPadding=0,
+                id='full'
+            )
+            doc.addPageTemplates([PageTemplate(id='main', frames=[frame])])
             story = []
             styles = getSampleStyleSheet()
 
@@ -378,14 +389,14 @@ class ReportGenerator:
                 if not first:
                     break
                 page_content.append(Paragraph(first, right_style))
+                # 不管文本是否被截断，都要累加已使用的高度
+                w, h = Paragraph(first, right_style).wrap(right_inner_w, inner_h_pt - used)
+                used += h
                 if rest:
                     remaining_texts[0] = rest
                     break
                 else:
                     remaining_texts.pop(0)
-                    # 重新 wrap 获取实际高度
-                    w, h = Paragraph(first, right_style).wrap(right_inner_w, inner_h_pt - used)
-                    used += h
 
             if not page_content:
                 break
@@ -417,7 +428,7 @@ class ReportGenerator:
     # ═══════════════════════════════════════════════════════════
 
     def _add_detailed_records_pages(self, story, styles, logs, year_month):
-        """详细维保记录页：连续追加，每页尽量填满，让 SimpleDocTemplate 自动分页"""
+        """详细维保记录页：每页固定放3个表格，满3个强制分页，避免自动分页拆散表格"""
 
         col_widths = [44.7*mm, 44.7*mm, 49.5*mm, 61.1*mm]
         left_style = ParagraphStyle(
@@ -425,7 +436,7 @@ class ReportGenerator:
             alignment=1, fontSize=11, fontName='DroidSansFallback'
         )
 
-        for log in logs:
+        for idx, log in enumerate(logs):
             data = []
 
             # 第1行：标题行（四列合并）
@@ -490,8 +501,8 @@ class ReportGenerator:
             if images:
                 date_dir = log['date']
                 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp"}
-                img_w = 34*mm
-                max_h = 40*mm
+                # 右列总宽160mm - 8mm padding = 152mm，4张图+3个间距 = 每张34mm + 3个5mm间距
+                img_w = 34.25*mm
                 valid_paths = []
                 for img_info in images[:4]:
                     thumb_name = img_info.get('thumbnail_name')
@@ -505,17 +516,13 @@ class ReportGenerator:
 
                 for ph_i, p in enumerate(valid_paths):
                     try:
-                        ir = ImageReader(p)
-                        iw, ih = ir.getSize()
-                        if iw > 0:
-                            actual_h = min(ih * (img_w / iw), max_h)
-                        else:
-                            actual_h = max_h
-                        photo_cells.append(Image(p, width=img_w, height=actual_h))
+                        # 强制统一高度：所有图片缩放到固定40mm高度，不保持原始宽高比
+                        # 这样所有缩略图尺寸完全一致，布局整齐
+                        photo_cells.append(Image(p, width=img_w, height=40*mm))
                     except Exception:
                         continue
                     if ph_i < len(valid_paths) - 1:
-                        photo_cells.append(Spacer(3*mm, 0))
+                        photo_cells.append(Spacer(5*mm, 0))
 
             photo_table = Table([photo_cells], hAlign='LEFT') if photo_cells else Spacer(1, 0)
             if isinstance(photo_table, Table):
@@ -533,9 +540,9 @@ class ReportGenerator:
                 photo_table, "", ""
             ])
 
-            # 按内容实际高度计算行高，照片行固定40mm
-            w_r, h_r = Paragraph(formatted_log, right_style).wrap(detail_width - 8, 200*mm)
-            actual_heights = [10*mm, 12*mm, h_r + 4*mm, 40*mm]
+            # 固定行高：标题10 + 时间地点12 + 巡查情况32 + 照片41 = 95mm
+            # 3×95=285mm ≤ 可用287mm，每页严格3个表格。巡查情况文字靠字号缩放适配32mm，行高不随文字变动
+            actual_heights = [10*mm, 12*mm, 32*mm, 41*mm]
 
             table = Table(data, colWidths=col_widths, rowHeights=actual_heights)
             table.setStyle(TableStyle([
@@ -556,6 +563,10 @@ class ReportGenerator:
                 ('BOTTOMPADDING', (0,0), (-1,-1), 1),
             ]))
             story.append(table)
+            # 每页固定3个表格：满3个且后面还有记录时强制分页。
+            # 3×95=285mm 正好落在可用287mm内，表格间不留额外间距，否则会把照片行挤到下一页
+            if (idx + 1) % 3 == 0 and idx + 1 < len(logs):
+                story.append(PageBreak())
     # ═══════════════════════════════════════════════════════════
     #  照片辅助（从原始代码保留）
     # ═══════════════════════════════════════════════════════════
